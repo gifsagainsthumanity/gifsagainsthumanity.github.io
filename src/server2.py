@@ -4,6 +4,7 @@ from base64 import b64encode
 from hashlib import sha1
 from mimetools import Message
 from StringIO import StringIO
+import threading
 
 
 import socket, select
@@ -51,7 +52,9 @@ class Game:
             self.current_score[player] = 0
             message = json.dumps({
                 "action": "player_joined",
-                "name": player.name
+                "player": {
+                    "name": player.name
+                }
             })
             for p in self.players:
                 p.socket.send_message(message)
@@ -326,10 +329,22 @@ class WebSocketsHandler(SocketServer.StreamRequestHandler):
         response += 'Sec-WebSocket-Accept: %s\r\n\r\n' % digest
         self.handshake_done = self.request.send(response)
 
-    def on_message(self, message):
-        print message
+
+class ThreadedTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
+    pass
 
 if __name__ == "__main__":
-    server = SocketServer.TCPServer(
-        ("", 5000), WebSocketsHandler)
+    # Port 0 means to select an arbitrary unused port
+    HOST, PORT = "", 5000
+
+    server = ThreadedTCPServer((HOST, PORT), WebSocketsHandler)
+    ip, port = server.server_address
+
+    # Start a thread with the server -- that thread will then start one
+    # more thread for each request
+    server_thread = threading.Thread(target=server.serve_forever)
+    # Exit the server thread when the main thread terminates
+    server_thread.daemon = True
+    server_thread.start()
+    print "Server loop running in thread:", server_thread.name
     server.serve_forever()
