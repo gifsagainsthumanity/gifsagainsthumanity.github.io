@@ -213,13 +213,15 @@ def do_handshake(data, socket):
     'Connection: Upgrade',
     'Sec-WebSocket-Accept: {key}\r\n\r\n',)
 
-    key = (re.search('Sec-WebSocket-Key:\s+(.*?)[\n\r]+', data)
-    .groups()[0]
-    .strip())
+    for line in data.split('\n'):
+        line = line.strip()
+        parts = line.split(':')
+        if parts[0].strip() == "Sec-WebSocket-Key":
+            key = parts[1].strip()
 
-    response_key = base64.b64encode(hashlib.sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
-    response = '\r\n'.join(websocket_answer).format(key=response_key)
-    broadcast_data(socket, response)
+	    response_key = base64.b64encode(hashlib.sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
+	    response = '\r\n'.join(websocket_answer).format(key=response_key)
+	    broadcast_data(socket, response)
 
 def handle_data_received(data, socket):
     if data[0] != '{':
