@@ -39,6 +39,7 @@
 // from server to current judge
 {
   action: 'card_played',
+  keyword: 'watermelon',
   card: 'http://i.imgur.com/asdf.gif'
 }
 
@@ -63,4 +64,10 @@
 {
   action: 'game_over',
   winner: 'Natasha'
+}
+
+//From client
+{
+    action: "start_round',
+    keyword: 'watermelon'
 }

@@ -1,4 +1,3 @@
-# Tcp Chat server
 
 import socket, select
 import json
@@ -17,6 +16,7 @@ class Game:
         self.white_cards = self._generate_white_cards()
         self.game_started = False
         self.round_cards = {}
+        self.current_score = {}
 
     def get_and_next_leader(self):
         index = self.leader_index
@@ -38,6 +38,7 @@ class Game:
     def join_game(self, player):
         if not self.game_started and player not in self.players:
             self.players.append(player)
+            self.current_score[player] = 0
             message = json.dumps({
                 "action": "player_joined",
                 "name": player.name
@@ -147,12 +148,71 @@ def handle_card_played(data, socket):
     message = {
         "card_played": card,
         "keyword": keyword,
-        ""
+        "action": "card_played"
     }
     broadcast_data(leader.socket, message)
 
+def handle_card_selected(data, socket):
+
+    card = data["card"]
+    keyword = data["keyword"]
+    game = all_games[keyword]
+    winner = game.round_cards[card]
+    game.current_score[winner] += 1
+
+    message = {
+        "action":"round_won",
+        "card": "card",
+        "winner": winner.name,
+        "score": game.current_score,
+    }
+    for player in game.players:
+        broadcast_data(player.socket, message)
+
+    winner_message = None
+    for player in game.players:
+        if game.current_score[player] >= 7:
+            winner_message = {
+                "action": "game_over",
+                "winner": player.name
+            }
+
+    if winner_message:
+        for player in game.players:
+            broadcast_data(player.socket, message)
+
+def handle_start_round(data, socket):
+    keyword = data["keyword"]
+    game = all_games[keyword]
+
+    leader = game.get_and_next_leader()
+    for player in game.players:
+        card = game.draw_card()
+        message = {
+            "action": 'receive_card',
+            "card": card
+        }
+        broadcast_data(player.socket, json.dumps(message))
+
+    resp = {
+        "action":"start_server",
+        "leader": leader.name,
+        "whitecard": game.draw_white_card()
+        }
+
+    for player in game.players:
+        r = json.dumps(resp)
+        broadcast_data(player.socket, r)
 
 def handle_data_received(data, socket):
+    if data[0] != '{':
+        lines = data.split('\n')
+        for line in lines[:]:
+            if not line:
+                break
+            else:
+                lines.pop(0)
+        data = "".join(lines).strip(' ')
     try:
         resp = json.loads(data)
     except:
@@ -171,6 +231,10 @@ def handle_data_received(data, socket):
         handle_start_game(resp, socket)
     elif action == "card_played":
         handle_card_played(resp, socket)
+    elif action == "select_card":
+        handle_card_selected(resp, socket)
+    elif action == "start_round":
+        handle_start_round(resp, socket)
 
 
 #Function to broadcast chat messages to all connected clients
