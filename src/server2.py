@@ -1,3 +1,11 @@
+import struct
+import SocketServer
+from base64 import b64encode
+from hashlib import sha1
+from mimetools import Message
+from StringIO import StringIO
+import threading
+
 
 import socket, select
 import json
@@ -44,10 +52,12 @@ class Game:
             self.current_score[player] = 0
             message = json.dumps({
                 "action": "player_joined",
-                "name": player.name
+                "player": {
+                    "name": player.name
+                }
             })
             for p in self.players:
-                broadcast_data(p.socket, message)
+                p.socket.send_message(message)
 
     def play_card(self, card, player):
         self.round_cards[card] = player
@@ -101,7 +111,7 @@ def handle_join(req, socket):
         "name": name
     }
     js = json.dumps(resp)
-    broadcast_data(socket, js)
+    socket.send_message(js)
 
 def handle_create(req, socket):
     if "name" not in req:
@@ -119,7 +129,7 @@ def handle_create(req, socket):
     }
 
     js = json.dumps(resp)
-    broadcast_data(socket, js)
+    socket.send_message(js)
 
 def handle_start_game(data, socket):
     if "keyword" not in data:
@@ -135,7 +145,7 @@ def handle_start_game(data, socket):
                 "action": 'receive_card',
                 "card": card
             }
-            broadcast_data(player.socket, json.dumps(message))
+            player.socket.send_message(json.dumps(message))
     leader = game.get_and_next_leader()
 
     resp = {
@@ -146,7 +156,7 @@ def handle_start_game(data, socket):
 
     for player in game.players:
         r = json.dumps(resp)
-        broadcast_data(player.socket, r)
+        player.socket.send_message(r)
 
 def handle_card_played(data, socket):
     player = all_players[socket]
@@ -162,7 +172,7 @@ def handle_card_played(data, socket):
         "keyword": keyword,
         "action": "card_played"
     }
-    broadcast_data(leader.socket, json.dumps(message))
+    leader.socket.send_message(json.dumps(message))
 
 def handle_card_selected(data, socket):
 
@@ -179,7 +189,7 @@ def handle_card_selected(data, socket):
         "score": game.current_score,
     }
     for player in game.players:
-        broadcast_data(player.socket, message)
+        player.socket.send_message(message)
 
     winner_message = None
     for player in game.players:
@@ -191,7 +201,7 @@ def handle_card_selected(data, socket):
 
     if winner_message:
         for player in game.players:
-            broadcast_data(player.socket, message)
+            player.socket.send_message(json.dumps(winner_message))
 
 def handle_start_round(data, socket):
     keyword = data["keyword"]
@@ -204,7 +214,7 @@ def handle_start_round(data, socket):
             "action": 'receive_card',
             "card": card
         }
-        broadcast_data(player.socket, json.dumps(message))
+        player.socket.send_message(json.dumps(message))
 
     resp = {
         "action":"start_server",
@@ -214,29 +224,30 @@ def handle_start_round(data, socket):
 
     for player in game.players:
         r = json.dumps(resp)
-        broadcast_data(player.socket, r)
+        player.socket.send_message(r)
 
 def do_handshake(data, socket):
-    websocket_answer = (
-    'HTTP/1.1 101 Switching Protocols',
-    'Upgrade: websocket',
-    'Connection: Upgrade',
-    'Sec-WebSocket-Accept: {key}\r\n\r\n',)
-
     for line in data.split('\n'):
         line = line.strip()
         parts = line.split(':')
         if parts[0].strip() == "Sec-WebSocket-Key":
-            key = parts[1].strip()
-            response_key = base64.b64encode(hashlib.sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
-            response = '\r\n'.join(websocket_answer).format(key=response_key)
-            broadcast_data(socket, response)
+            key = parts[1]
+            dec = base64.b64decode(key)
+            dec += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+            sha = hashlib.sha1()
+            sha.update(dec)
+            digest = sha.digest()
+            b64 = base64.b64encode(digest)
+
+            handshake = """HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: %s
+Sec-WebSocket-Protocol: chat
+""" % b64
 
 
 def handle_data_received(data, socket):
-    if data[0] != '{':
-       do_handshake(data, socket)
-       return
     try:
         resp = json.loads(data)
     except:
@@ -261,77 +272,79 @@ def handle_data_received(data, socket):
         handle_start_round(resp, socket)
 
 
-#Function to broadcast chat messages to all connected clients
-def broadcast_data(sock, message):
-    for socket in CONNECTION_LIST:
-        if socket != server_socket and socket == sock:
-            try:
-                socket.send(chr(129))
-                length = len(message)
-                if length <= 125:
-                    socket.send(chr(length))
-                elif length >= 126 and length <= 65535:
-                    socket.send(126)
-                    socket.send(struct.pack(">H", length))
-                else:
-                    socket.send(127)
-                    socket.send(struct.pack(">Q", length))
-                socket.send(message)
-            except Exception, e:
-                # broken socket connection may be, chat client pressed ctrl+c for example
-                print "broken socket " + str(e)
-                socket.close()
-                CONNECTION_LIST.remove(socket)
+
+all_sokets = {}
+
+class WebSocketsHandler(SocketServer.StreamRequestHandler):
+    magic = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+
+    def setup(self):
+        SocketServer.StreamRequestHandler.setup(self)
+        print "connection established", self.client_address
+        self.handshake_done = False
+
+    def handle(self):
+        while True:
+            if not self.handshake_done:
+                self.handshake()
+            else:
+                self.read_next_message()
+
+    def read_next_message(self):
+        length = ord(self.rfile.read(2)[1]) & 127
+        if length == 126:
+            length = struct.unpack(">H", self.rfile.read(2))[0]
+        elif length == 127:
+            length = struct.unpack(">Q", self.rfile.read(8))[0]
+        masks = [ord(byte) for byte in self.rfile.read(4)]
+        decoded = ""
+        for char in self.rfile.read(length):
+            decoded += chr(ord(char) ^ masks[len(decoded) % 4])
+        handle_data_received(decoded, self)
+
+    def send_message(self, message):
+        self.request.send(chr(129))
+        length = len(message)
+        if length <= 125:
+            self.request.send(chr(length))
+        elif length >= 126 and length <= 65535:
+            self.request.send(126)
+            self.request.send(struct.pack(">H", length))
+        else:
+            self.request.send(127)
+            self.request.send(struct.pack(">Q", length))
+        self.request.send(message)
+
+    def handshake(self):
+        data = self.request.recv(1024).strip()
+        headers = Message(StringIO(data.split('\r\n', 1)[1]))
+        if headers.get("Upgrade", None) != "websocket":
+            return
+        print 'Handshaking...'
+        key = headers['Sec-WebSocket-Key']
+        digest = b64encode(sha1(key + self.magic).hexdigest().decode('hex'))
+        response = 'HTTP/1.1 101 Switching Protocols\r\n'
+        response += 'Upgrade: websocket\r\n'
+        response += 'Connection: Upgrade\r\n'
+        response += 'Sec-WebSocket-Accept: %s\r\n\r\n' % digest
+        self.handshake_done = self.request.send(response)
+
+
+class ThreadedTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
+    pass
 
 if __name__ == "__main__":
-    # List to keep track of socket descriptors
-    CONNECTION_LIST = []
-    RECV_BUFFER = 4096 # Advisable to keep it as an exponent of 2
-    PORT = 5000
+    # Port 0 means to select an arbitrary unused port
+    HOST, PORT = "", 5000
 
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # this has no effect, why ?
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind(("0.0.0.0", PORT))
-    server_socket.listen(10)
+    server = ThreadedTCPServer((HOST, PORT), WebSocketsHandler)
+    ip, port = server.server_address
 
-    # Add server socket to the list of readable connections
-    CONNECTION_LIST.append(server_socket)
-
-    print "server started on port " + str(PORT)
-
-    while 1:
-        # Get the list sockets which are ready to be read through select
-        read_sockets, write_sockets, error_sockets = select.select(CONNECTION_LIST, [], [])
-
-        for sock in read_sockets:
-            #New connection
-            if sock == server_socket:
-                # Handle the case in which there is a new connection recieved through server_socket
-                sockfd, addr = server_socket.accept()
-                CONNECTION_LIST.append(sockfd)
-                print "Client (%s, %s) connected" % (sockfd, addr)
-
-                user_connected()
-                # broadcast_data(sockfd, "[%s:%s] entered room\n" % (sockfd, addr))
-
-            #Some incoming message from a client
-            else:
-                # Data recieved from client, process it
-                try:
-                    #In Windows, sometimes when a TCP program closes abruptly,
-                    # a "Connection reset by peer" exception will be thrown
-                    data = sock.recv(RECV_BUFFER)
-                    if data:
-                        handle_data_received(data, sock)
-                        # broadcast_data(sock, "\r" + '<' + str(sock.getpeername()) + '> ' + data)
-
-                except Exception, e:
-                    print str(e)
-                    broadcast_data(sock, "Client (%s, %s) is offline" % (sockfd, addr))
-                    print "Client (%s, %s) is offline" % (sockfd, addr)
-                    sock.close()
-                    CONNECTION_LIST.remove(sock)
-                    continue
-
-    server_socket.close()
+    # Start a thread with the server -- that thread will then start one
+    # more thread for each request
+    server_thread = threading.Thread(target=server.serve_forever)
+    # Exit the server thread when the main thread terminates
+    server_thread.daemon = True
+    server_thread.start()
+    print "Server loop running in thread:", server_thread.name
+    server.serve_forever()
