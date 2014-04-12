@@ -1,0 +1,10 @@
+{
+  action: 'create',
+  userName: 'John'
+}
+
+{
+  action: 'join',
+  keyword: 'watermelon',
+  username: 'Natasha'
+}
