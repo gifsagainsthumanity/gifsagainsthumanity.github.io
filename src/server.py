@@ -2,27 +2,187 @@
 
 import socket, select
 import json
+from player import Player, all_players
+
+
+all_games = {}
+
+class Game:
+    def __init__(self):
+        self.keyword = self._generate_name()
+        all_games[self.keyword] = self
+        self.players = []
+        self.leader_index = 0
+        self.cards = self._generate_cards()
+        self.white_cards = self._generate_white_cards()
+        self.game_started = False
+        self.round_cards = {}
+
+    def get_and_next_leader(self):
+        index = self.leader_index
+        self.leader_index += 1 % len(self.players)
+        return self.players[index]
+
+    def get_leader(self):
+        return self.players[self.leader_index]
+
+    def draw_card(self):
+        return self.cards.pop()
+
+    def draw_white_card(self):
+        return self.white_cards.pop()
+
+    def start_game(self):
+        self.game_started = True
+
+    def join_game(self, player):
+        if not self.game_started and player not in self.players:
+            self.players.append(player)
+            message = json.dumps({
+                "action": "player_joined",
+                "name": player.name
+            })
+            for p in self.players:
+                broadcast_data(p.socket, message)
+
+    def play_card(self, card, player):
+        self.round_cards[card] = player
+
+    def _generate_name(self):
+        # TODO change this
+        return "yeastiest"
+
+    def _generate_cards(self):
+        return ["http://i.imgur.com/2oGYP8J.jpg", "http://b.thumbs.redditmedia.com/S_2OLd-DbF_Yc_G7.jpg",
+                "http://i.imgur.com/ZjQXAfz.jpg", "http://imgur.com/zdAb3Ib", "http://i.imgur.com/V1iYrHl.gif",
+                "http://i.imgur.com/678NYia.jpg", "http://b.thumbs.redditmedia.com/Dl4TngKo5Z8Nenqy.jpg",
+                "http://imgur.com/aU3yVEe", "http://imgur.com/fNYScoP", "http://i.imgur.com/qALIN3j.jpg",
+                "http://imgur.com/kOL1RwK", "http://imgur.com/BQv0TuK"]
+
+    def _generate_white_cards(self):
+        return ["asdsdg", "dwljfgwidf", "jhkfhdkjhfks"]
+
+def drop_game(keyword):
+    del all_games[keyword]
+
 
 def user_connected():
     pass
 
-def handle_data_received(data):
-    resp = json.loads(data)
 
+def handle_join(req, socket):
+    if "name" not in req:
+        print "bad json"
+        return
+
+    name = req["name"]
+    player = Player(socket, name)
+    keyword = req["keyword"]
+    if keyword not in all_games:
+        return
+    game = all_games[keyword]
+    game.join_game(player)
+
+    resp = {
+        "action": "join",
+        "name": name
+    }
+    js = json.dumps(resp)
+    broadcast_data(socket, js)
+
+def handle_create(req, socket):
+    if "name" not in req:
+        print "bad json"
+        return
+    name = req["name"]
+    player = Player(socket, name)
+
+    game = Game()
+    game.join_game(player)
+
+    resp = {
+        "action": "create",
+        "keyword": game.keyword
+    }
+
+    js = json.dumps(resp)
+    broadcast_data(socket, js)
+
+def handle_start_game(data, socket):
+    if "keyword" not in data:
+        print "bad input"
+        return
+    keyword = data["keyword"]
+    game = all_games[keyword]
+    game.start_game()
+    for player in game.players:
+        for i in xrange(0, 2):
+            card = game.draw_card()
+            message = {
+                "action": 'receive_card',
+                "card": card
+            }
+            broadcast_data(player.socket, json.dumps(message))
+    leader = game.get_and_next_leader()
+
+    resp = {
+        "action":"start_server",
+        "leader": leader.name,
+        "whitecard": game.draw_white_card()
+        }
+
+    for player in game.players:
+        r = json.dumps(resp)
+        broadcast_data(player.socket, r)
+
+def handle_card_played(data, socket):
+    player = all_players[socket]
+    keyword = data["keyword"]
+    card = data["card"]
+
+    game = all_games[keyword]
+    leader = game.get_leader()
+    game.play_card(card, player)
+
+    message = {
+        "card_played": card,
+        "keyword": keyword,
+        ""
+    }
+    broadcast_data(leader.socket, message)
+
+
+def handle_data_received(data, socket):
+    try:
+        resp = json.loads(data)
+    except:
+        print "not JSON"
+        return
+
+    if "action" not in resp:
+        print "bad request"
+
+    action = resp["action"]
+    if action == "create":
+        handle_create(resp, socket)
+    elif action == "join":
+        handle_join(resp, socket)
+    elif action == "start_game":
+        handle_start_game(resp, socket)
+    elif action == "card_played":
+        handle_card_played(resp, socket)
 
 
 #Function to broadcast chat messages to all connected clients
 def broadcast_data(sock, message):
-    #Do not send the message to master socket and the client who has send us the message
     for socket in CONNECTION_LIST:
-        if socket != server_socket and socket != sock:
+        if socket != server_socket and socket == sock:
             try:
                 socket.send(message)
             except:
                 # broken socket connection may be, chat client pressed ctrl+c for example
                 socket.close()
                 CONNECTION_LIST.remove(socket)
-
 
 if __name__ == "__main__":
     # List to keep track of socket descriptors
@@ -64,10 +224,11 @@ if __name__ == "__main__":
                     # a "Connection reset by peer" exception will be thrown
                     data = sock.recv(RECV_BUFFER)
                     if data:
-                        handle_data_received(data)
+                        handle_data_received(data, sock)
                         # broadcast_data(sock, "\r" + '<' + str(sock.getpeername()) + '> ' + data)
 
-                except:
+                except Exception, e:
+                    print str(e)
                     broadcast_data(sock, "Client (%s, %s) is offline" % (sockfd, addr))
                     print "Client (%s, %s) is offline" % (sockfd, addr)
                     sock.close()

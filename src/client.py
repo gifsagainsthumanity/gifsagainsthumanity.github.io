@@ -43,7 +43,7 @@ if __name__ == "__main__":
                     prompt()
 
             #user entered a message
-            else :
+            else:
                 msg = sys.stdin.readline()
                 s.send(msg)
                 prompt()
