@@ -4,6 +4,7 @@ import json
 from player import Player, all_players
 import base64
 import hashlib
+import re
 
 all_games = {}
 
@@ -206,25 +207,19 @@ def handle_start_round(data, socket):
         broadcast_data(player.socket, r)
 
 def do_handshake(data, socket):
-    for line in data.split('\n'):
-        line = line.strip()
-        parts = line.split(':')
-        if parts[0].strip() == "Sec-WebSocket-Key":
-            key = parts[1]
-            dec = base64.b64decode(key)
-            dec += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-            sha = hashlib.sha1()
-            sha.update(dec)
-            digest = sha.digest()
-            b64 = base64.b64encode(digest)
+    websocket_answer = (
+    'HTTP/1.1 101 Switching Protocols',
+    'Upgrade: websocket',
+    'Connection: Upgrade',
+    'Sec-WebSocket-Accept: {key}\r\n\r\n',)
 
-            handshake = """HTTP/1.1 101 Switching Protocols
-Upgrade: websocket
-Connection: Upgrade
-Sec-WebSocket-Accept: %s
-Sec-WebSocket-Protocol: chat
-""" % str(b64)
-            broadcast_data(socket, handshake)
+    key = (re.search('Sec-WebSocket-Key:\s+(.*?)[\n\r]+', data)
+    .groups()[0]
+    .strip())
+
+    response_key = base64.b64encode(hashlib.sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
+    response = '\r\n'.join(websocket_answer).format(key=response_key)
+    broadcast_data(socket, response)
 
 def handle_data_received(data, socket):
     if data[0] != '{':
