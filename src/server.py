@@ -4,7 +4,8 @@ import json
 from player import Player, all_players
 import base64
 import hashlib
-import re
+import struct
+from random import randint
 
 all_games = {}
 
@@ -52,15 +53,24 @@ class Game:
         self.round_cards[card] = player
 
     def _generate_name(self):
-        # TODO change this
-        return "yeastiest"
+        with open("data/wordlist") as f:
+            content = f.readlines()
+        word_list = []
+        for word in content:
+            word_list.append(word.strip().replace('\n', ''))
+
+        index = randint(0, len(word_list))
+        word = word_list[index]
+        del word_list[index]
+        return word
 
     def _generate_cards(self):
-        return ["http://i.imgur.com/2oGYP8J.jpg", "http://b.thumbs.redditmedia.com/S_2OLd-DbF_Yc_G7.jpg",
-                "http://i.imgur.com/ZjQXAfz.jpg", "http://imgur.com/zdAb3Ib", "http://i.imgur.com/V1iYrHl.gif",
-                "http://i.imgur.com/678NYia.jpg", "http://b.thumbs.redditmedia.com/Dl4TngKo5Z8Nenqy.jpg",
-                "http://imgur.com/aU3yVEe", "http://imgur.com/fNYScoP", "http://i.imgur.com/qALIN3j.jpg",
-                "http://imgur.com/kOL1RwK", "http://imgur.com/BQv0TuK"]
+        with open("../gifs/list.txt") as f:
+            content = f.readlines()
+        cards = []
+        for card in content:
+            cards.append(card.strip().replace('\n', ''))
+        return cards
 
     def _generate_white_cards(self):
         return ["asdsdg", "dwljfgwidf", "jhkfhdkjhfks"]
@@ -148,11 +158,11 @@ def handle_card_played(data, socket):
     game.play_card(card, player)
 
     message = {
-        "card_played": card,
+        "card": card,
         "keyword": keyword,
         "action": "card_played"
     }
-    broadcast_data(leader.socket, message)
+    broadcast_data(leader.socket, json.dumps(message))
 
 def handle_card_selected(data, socket):
 
@@ -218,10 +228,10 @@ def do_handshake(data, socket):
         parts = line.split(':')
         if parts[0].strip() == "Sec-WebSocket-Key":
             key = parts[1].strip()
+            response_key = base64.b64encode(hashlib.sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
+            response = '\r\n'.join(websocket_answer).format(key=response_key)
+            broadcast_data(socket, response)
 
-	    response_key = base64.b64encode(hashlib.sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
-	    response = '\r\n'.join(websocket_answer).format(key=response_key)
-	    broadcast_data(socket, response)
 
 def handle_data_received(data, socket):
     if data[0] != '{':
@@ -256,9 +266,20 @@ def broadcast_data(sock, message):
     for socket in CONNECTION_LIST:
         if socket != server_socket and socket == sock:
             try:
+                socket.send(chr(129))
+                length = len(message)
+                if length <= 125:
+                    socket.send(chr(length))
+                elif length >= 126 and length <= 65535:
+                    socket.send(126)
+                    socket.send(struct.pack(">H", length))
+                else:
+                    socket.send(127)
+                    socket.send(struct.pack(">Q", length))
                 socket.send(message)
-            except:
+            except Exception, e:
                 # broken socket connection may be, chat client pressed ctrl+c for example
+                print "broken socket " + str(e)
                 socket.close()
                 CONNECTION_LIST.remove(socket)
 
