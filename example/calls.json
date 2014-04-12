@@ -1,10 +1,60 @@
+// from a person, who will be the game coordinator
 {
   action: 'create',
-  userName: 'John'
+  username: 'John'
 }
 
+// from any other person, to join a lobby
 {
   action: 'join',
   keyword: 'watermelon',
   username: 'Natasha'
+}
+
+// from server to each player 7x
+{
+  action: 'receive_card',
+  card: 'http://i.imgur.com/asdf.gif'
+}
+
+// to server from game coordinator
+{
+  action: 'start_turn',
+  whitecard: 'Trying to get through the office without being seen',
+  leader: 'Natasha'
+}
+
+// to server from any player not judge
+{
+  action: 'play_card',
+  card: 'http://i.imgur.com/asdf.gif'
+}
+
+// from server to current judge
+{
+  action: 'card_played',
+  card: 'http://i.imgur.com/asdf.gif'
+}
+
+// to server from current judge
+{
+  action: 'select_card',
+  card: 'http://i.imgur.com/asdf.gif'
+}
+
+// from server
+{
+  action: 'round_won',
+  card: 'http://i.imgur.com/asdf.gif',
+  winner: 'Natasha',
+  scores: {
+    'Natasha': 1,
+    'John': 0
+  }
+}
+
+// from server
+{
+  action: 'game_over',
+  winner: 'Natasha'
 }
