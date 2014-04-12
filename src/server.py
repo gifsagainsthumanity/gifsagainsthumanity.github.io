@@ -2,7 +2,8 @@
 import socket, select
 import json
 from player import Player, all_players
-
+import base64
+import hashlib
 
 all_games = {}
 
@@ -204,15 +205,31 @@ def handle_start_round(data, socket):
         r = json.dumps(resp)
         broadcast_data(player.socket, r)
 
+def do_handshake(data, socket):
+    for line in data.split('\n'):
+        line = line.strip()
+        parts = line.split(':')
+        if parts[0].strip() == "Sec-WebSocket-Key":
+            key = parts[1]
+            dec = base64.b64decode(key)
+            dec += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+            sha = hashlib.sha1()
+            sha.update(dec)
+            digest = sha.digest()
+            b64 = base64.b64encode(digest)
+
+            handshake = """HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: %s
+Sec-WebSocket-Protocol: chat
+""" % str(b64)
+            broadcast_data(socket, handshake)
+
 def handle_data_received(data, socket):
     if data[0] != '{':
-        lines = data.split('\n')
-        for line in lines[:]:
-            if not line:
-                break
-            else:
-                lines.pop(0)
-        data = "".join(lines).strip(' ')
+       do_handshake(data, socket)
+       return
     try:
         resp = json.loads(data)
     except:
