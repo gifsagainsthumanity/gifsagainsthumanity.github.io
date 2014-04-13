@@ -38,7 +38,7 @@ class Game:
         self.game_started = False
         self.round_cards = {}
         self.current_score = {}
-        self.creator = None
+        self.owner = None
 
     def get_keyword(self):
         index = randint(0, len(self.WORD_LIST))
@@ -64,8 +64,8 @@ class Game:
         self.game_started = True
 
     def join_game(self, player):
-        if not self.creator:
-            self.creator = player
+        if not self.owner:
+            self.owner = player
         if not self.game_started and player not in self.players:
             self.players.append(player)
             self.current_score[player] = 0
@@ -75,7 +75,7 @@ class Game:
                     "players": [{"name": player.name} for player in self.players]
                 },
                 "keyword": self.keyword,
-                "creator": self.creator
+                "owner": self.owner
             })
             for p in self.players:
                 p.socket.send_message(message)
