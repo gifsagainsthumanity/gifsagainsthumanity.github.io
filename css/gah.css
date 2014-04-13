@@ -1,0 +1,20 @@
+.navbar {
+}
+
+.player-circle {
+  width: 1.5em;
+  height: 1.5em;
+  font-size: 2em;
+  background-color: lightgrey;
+  overflow: hidden;
+  border-radius: 50%;
+  color: white;
+  display: inline-block;
+  padding: 0.05em 0 0 0.45em;
+}
+
+.player-circle + h3, .player-circle + h4 {
+  display: inline-block;
+  vertical-align: text-bottom;
+  padding-bottom: 0.25em;
+}
