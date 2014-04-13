@@ -18,8 +18,18 @@ from random import randint
 all_games = {}
 
 class Game:
+    @staticmethod
+    def _generate_name():
+        with open("data/wordlist") as f:
+            content = f.readlines()
+        word_list = []
+        for word in content:
+            word_list.append(word.strip().replace('\n', ''))
+        return word_list
+    WORD_LIST = _generate_name()
+
     def __init__(self):
-        self.keyword = self._generate_name()
+        self.keyword = self.get_keyword()
         all_games[self.keyword] = self
         self.players = []
         self.leader_index = 0
@@ -28,6 +38,11 @@ class Game:
         self.game_started = False
         self.round_cards = {}
         self.current_score = {}
+        self.creator = None
+
+    def get_keyword(self):
+        index = randint(0, len(self.WORD_LIST))
+        return self.WORD_LIST.pop(index)
 
     def get_and_next_leader(self):
         index = self.leader_index
@@ -38,41 +53,35 @@ class Game:
         return self.players[self.leader_index]
 
     def draw_card(self):
-        return self.cards.pop()
+        index = randint(0, len(self.cards))
+        return self.cards.pop(index)
 
     def draw_white_card(self):
-        return self.white_cards.pop()
+        index = randint(0, len(self.white_cards))
+        return self.white_cards.pop(index)
 
     def start_game(self):
         self.game_started = True
 
     def join_game(self, player):
+        if not self.creator:
+            self.creator = player
         if not self.game_started and player not in self.players:
             self.players.append(player)
             self.current_score[player] = 0
             message = json.dumps({
-                "action": "player_joined",
-                "player": {
-                    "name": player.name
-                }
+                "action": "lobby_update",
+                "lobby": {
+                    "players": [{"name": player.name} for player in self.players]
+                },
+                "keyword": self.keyword,
+                "creator": self.creator
             })
             for p in self.players:
                 p.socket.send_message(message)
 
     def play_card(self, card, player):
         self.round_cards[card] = player
-
-    def _generate_name(self):
-        with open("data/wordlist") as f:
-            content = f.readlines()
-        word_list = []
-        for word in content:
-            word_list.append(word.strip().replace('\n', ''))
-
-        index = randint(0, len(word_list))
-        word = word_list[index]
-        del word_list[index]
-        return word
 
     def _generate_cards(self):
         with open("../gifs/list.txt") as f:
@@ -85,13 +94,9 @@ class Game:
     def _generate_white_cards(self):
         return ["asdsdg", "dwljfgwidf", "jhkfhdkjhfks"]
 
-def drop_game(keyword):
-    del all_games[keyword]
-
 
 def user_connected():
     pass
-
 
 def handle_join(req, socket):
     if "name" not in req:
@@ -139,7 +144,7 @@ def handle_start_game(data, socket):
     game = all_games[keyword]
     game.start_game()
     for player in game.players:
-        for i in xrange(0, 2):
+        for i in xrange(0, 7):
             card = game.draw_card()
             message = {
                 "action": 'receive_card',
@@ -159,6 +164,9 @@ def handle_start_game(data, socket):
         player.socket.send_message(r)
 
 def handle_card_played(data, socket):
+    if "keyword" not in data or "card" not in data:
+        print "bad data"
+        return
     player = all_players[socket]
     keyword = data["keyword"]
     card = data["card"]
@@ -175,7 +183,9 @@ def handle_card_played(data, socket):
     leader.socket.send_message(json.dumps(message))
 
 def handle_card_selected(data, socket):
-
+    if "card" not in data or "keyword" not in data:
+        print "bad data"
+        return
     card = data["card"]
     keyword = data["keyword"]
     game = all_games[keyword]
@@ -183,13 +193,13 @@ def handle_card_selected(data, socket):
     game.current_score[winner] += 1
 
     message = {
-        "action":"round_won",
+        "action": "round_won",
         "card": "card",
         "winner": winner.name,
         "score": game.current_score,
     }
     for player in game.players:
-        player.socket.send_message(message)
+        player.socket.send_message(json.dumps(message))
 
     winner_message = None
     for player in game.players:
@@ -202,8 +212,13 @@ def handle_card_selected(data, socket):
     if winner_message:
         for player in game.players:
             player.socket.send_message(json.dumps(winner_message))
+        del all_games[keyword]
+        game.WORD_LIST.append(keyword)
 
 def handle_start_round(data, socket):
+    if "keyword" not in data:
+        print "bad data"
+        return
     keyword = data["keyword"]
     game = all_games[keyword]
 
@@ -225,26 +240,6 @@ def handle_start_round(data, socket):
     for player in game.players:
         r = json.dumps(resp)
         player.socket.send_message(r)
-
-def do_handshake(data, socket):
-    for line in data.split('\n'):
-        line = line.strip()
-        parts = line.split(':')
-        if parts[0].strip() == "Sec-WebSocket-Key":
-            key = parts[1]
-            dec = base64.b64decode(key)
-            dec += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-            sha = hashlib.sha1()
-            sha.update(dec)
-            digest = sha.digest()
-            b64 = base64.b64encode(digest)
-
-            handshake = """HTTP/1.1 101 Switching Protocols
-Upgrade: websocket
-Connection: Upgrade
-Sec-WebSocket-Accept: %s
-Sec-WebSocket-Protocol: chat
-""" % b64
 
 
 def handle_data_received(data, socket):
@@ -272,9 +267,6 @@ def handle_data_received(data, socket):
         handle_start_round(resp, socket)
 
 
-
-all_sokets = {}
-
 class WebSocketsHandler(SocketServer.StreamRequestHandler):
     magic = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
@@ -289,6 +281,9 @@ class WebSocketsHandler(SocketServer.StreamRequestHandler):
                 self.handshake()
             else:
                 self.read_next_message()
+
+    def finish(self):
+        pass
 
     def read_next_message(self):
         length = ord(self.rfile.read(2)[1]) & 127

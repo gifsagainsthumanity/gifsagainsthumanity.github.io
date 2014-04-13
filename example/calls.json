@@ -65,9 +65,3 @@
   action: 'game_over',
   winner: 'Natasha'
 }
-
-//From client
-{
-    action: "start_round',
-    keyword: 'watermelon'
-}
