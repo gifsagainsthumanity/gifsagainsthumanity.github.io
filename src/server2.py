@@ -17,17 +17,17 @@ from random import randint
 
 all_games = {}
 
-class Game:
-    @staticmethod
-    def _generate_name():
+def _generate_name():
         with open("data/wordlist") as f:
             content = f.readlines()
         word_list = []
         for word in content:
             word_list.append(word.strip().replace('\n', ''))
         return word_list
-    WORD_LIST = _generate_name()
 
+class Game:
+
+    WORD_LIST = _generate_name()
     def __init__(self):
         self.keyword = self.get_keyword()
         all_games[self.keyword] = self
